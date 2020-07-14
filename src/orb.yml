@@ -1,0 +1,754 @@
+version: 2.1
+
+#
+# YAML references - code blocks for reusability. Put anything with a long-ish command here.
+#
+references:
+  # Set up the all registry types used in Nexus
+  setup_registries: &setup_registries
+    run:
+      name: Set up all registries
+      command: |
+        # Print environment
+        echo "Environment configuration ===================="
+        env | egrep -v '.*_PASS|.*_CONFIG' | awk -F'=' '{st = index($0,"="); printf("\033[0;35m%-50s\033[0m= \"%s\"\n", $1, substr($0,st+1))}'
+        echo "=============================================="
+
+        # NPM
+        NPM_AUTH=$(echo -n "${NEXUS_USER}:${NEXUS_PASS}" | base64)
+        echo "# Pull-only
+        registry=https://${NEXUS_HOST}${NPM_MIRROR_PATH}
+        _auth=${NPM_AUTH}
+        email=${CI_EMAIL}
+        always-auth=true
+
+        # Scoped registry config
+        @ivy:registry=https://${NEXUS_HOST}${NPM_HOSTED_PATH}
+        //${NEXUS_HOST}${NPM_HOSTED_PATH}:_auth=${NPM_AUTH}
+        //${NEXUS_HOST}${NPM_HOSTED_PATH}:email=${CI_EMAIL}
+        //${NEXUS_HOST}${NPM_HOSTED_PATH}:always-auth=true" > ~/.npmrc
+
+        # Pip
+        # Write to global settings so it takes effect for sudo as well.
+        echo "[global]
+        index = https://${NEXUS_HOST}${PYPI_MIRROR_PATH}/pypi
+        index-url = https://${NEXUS_HOST}${PYPI_MIRROR_PATH}/simple" | sudo tee /etc/pip.conf > /dev/null
+        echo "machine ${NEXUS_HOST}
+          login ${NEXUS_USER}
+          password ${NEXUS_PASS}" > ~/.netrc
+        chmod 0600 ~/.netrc
+        # Copy `.netrc` to root as well since it is only searched for in home.
+        ROOT_HOME="$(getent passwd root | cut -d: -f6)"
+        #USER_HOME="$(getent passwd $(whoami) | cut -d: -f6)"
+        sudo cp ~/.netrc "${ROOT_HOME}"/.netrc
+        sudo chown root: "${ROOT_HOME}"/.netrc
+
+        # Twine (Pip uploads)
+        echo "[distutils]
+        index-servers =
+          nexus
+        [nexus]
+        repository: https://${NEXUS_HOST}${PYPI_HOSTED_PATH}
+        username: ${NEXUS_USER}
+        password: ${NEXUS_PASS}" > ~/.pypirc
+
+        # maven (Maven uploads)
+        test -d ~/.m2 || mkdir ~/.m2
+        echo "<settings>
+          <servers>
+            <server>
+              <id>nxtlytics</id>
+              <username>${NEXUS_USER}</username>
+              <password>${NEXUS_PASS}</password>
+            </server>
+          </servers>
+        </settings>" > ~/.m2/settings.xml
+
+        # Gradle (Maven uploads)
+        test -d ~/.gradle || mkdir ~/.gradle
+        echo "nexusUsername=${NEXUS_USER}
+        nexusPassword=${NEXUS_PASS}" > ~/.gradle/gradle.properties
+
+        # Update Google Chrome and heroku keys
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        wget -qO- https://cli-assets.heroku.com/install-ubuntu.sh | sh
+
+        # Docker
+        if [ ! -f /etc/docker/daemon.json ]; then
+          sudo mkdir /etc/docker || true
+          echo '{}' | sudo tee /etc/docker/daemon.json
+        fi
+        sudo cat /etc/docker/daemon.json | jq ". + {\"registry-mirrors\": [\"${DOCKER_MIRROR_HOST}\"]}" | sudo tee /etc/docker/daemon.json > /dev/null
+        mkdir ~/.docker || true
+        sudo mkdir ${ROOT_HOME}/.docker || true
+        echo "{\"auths\": { \"${DOCKER_REGISTRY_HOST}\": {\"auth\": \"${NPM_AUTH}\",\"email\": \"${CI_EMAIL}\"}}}" > ~/.docker/config.json
+        sudo cp ~/.docker/config.json "${ROOT_HOME}"/.docker/config.json
+        sudo chown root: "${ROOT_HOME}"/.docker/config.json
+
+  # OpenVPN commands - required for Docker machines
+  setup_vpn: &setup_vpn
+    run:
+      name: Set up VPN connection
+      command: |
+        sudo mkdir /opt/ivy/ && cd /opt/ivy
+        sudo apt update && sudo apt install -f openvpn
+        echo "${OVPN_CONFIG}" | base64 --decode | sudo tee config.ovpn > /dev/null
+
+  connect_vpn: &connect_vpn
+    run:
+      name: Start VPN connection
+      command: |
+        sudo openvpn --config /opt/ivy/config.ovpn
+      background: true
+
+  # Proxy-VPN commands - slow
+  setup_vpn_proxy: &setup_vpn_proxy
+    run:
+      name: Set up proxy-VPN connection
+      command: |
+        sudo mkdir /opt/ivy/ && cd /opt/ivy
+        # These deb files built for debian STRETCH only
+        sudo wget "https://${S3_HTTP_ENDPOINT}/openvpn/openvpn_2.4.0-6%2Bdeb9u3_amd64.deb"
+        sudo wget "https://${S3_HTTP_ENDPOINT}/openvpn/ocproxy_1.70~20170114173103-1ppa1~xenial_amd64.deb"
+        sudo apt install ./openvpn_2.4.0-6+deb9u3_amd64.deb
+        sudo apt install ./ocproxy_1.70~20170114173103-1ppa1~xenial_amd64.deb
+        sudo apt -f install
+        echo "${OVPN_CONFIG}" | base64 --decode | sudo tee config.ovpn > /dev/null
+
+        # Hostname redirections.
+        echo "127.0.0.1 ${NEXUS_HOST} ${DOCKER_REGISTRY_HOST} ${DOCKER_MIRROR_HOST} " | sudo tee -a /etc/hosts
+
+  connect_vpn_proxy: &connect_vpn_proxy
+    run:
+      name: Start proxy-VPN connection
+      command: |
+        sudo openvpn --config /opt/ivy/config.ovpn \
+          --script-security 2 \
+          --dev "|/usr/bin/ocproxy -L 443:${NEXUS_IP}:443 -L80:${NEXUS_IP}:80"
+      background: true
+
+  # SSH-VPN commands - fast, but limited
+  setup_vpn_ssh: &setup_vpn_ssh
+    run:
+      name: Setup SSH
+      command: |
+        BASE_DIR="$(cd ~; pwd)"
+        mkdir -p "${BASE_DIR}"/.ssh/ || true
+        chmod 0700 "${BASE_DIR}"/.ssh/
+        touch "${BASE_DIR}"/.ssh/tunnel_key
+        chmod 0600 "${BASE_DIR}"/.ssh/tunnel_key
+        echo "${SSH_KEY_CONFIG}" | base64 --decode > "${BASE_DIR}"/.ssh/tunnel_key
+
+        # Hostname redirections.
+        echo "127.0.0.1 ${NEXUS_HOST} ${DOCKER_REGISTRY_HOST} ${DOCKER_MIRROR_HOST} " | sudo tee -a /etc/hosts
+
+  connect_vpn_ssh: &connect_vpn_ssh
+    run:
+      name: Connect to SSH-VPN
+      command: |
+        SSH_DIR="$(cd ~/.ssh; pwd)"
+        sudo ssh -N -o "StrictHostKeyChecking no" \
+          -i "${SSH_DIR}"/tunnel_key \
+          -L 127.0.0.1:443:${NEXUS_IP}:443 \
+          ${SSH_TUNNEL_USER}@${SSH_TUNNEL_HOST}
+      background: true
+
+  wait_vpn: &wait_vpn
+    run:
+      name: Wait for VPN to be connected
+      command: |
+        wget -O/dev/null --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 -t 10 https://${NEXUS_HOST} &&
+         echo 'VPN connected!' || (echo 'VPN seems broken?' && exit 1)
+
+  # Common step params
+  common_step_params: &common_step_params
+      working_directory: << parameters.working_directory >>
+      after_checkout_commands: << parameters.after_checkout_commands >>
+
+  # Common workflow params
+  common_workflow_params: &common_workflow_params
+      working_directory: << parameters.working_directory >>
+      after_checkout_commands: << parameters.after_checkout_commands >>
+      tests_directory: << parameters.tests_directory >>
+
+  # after_checkout workflow params
+  after_checkout_workflow_params: &after_checkout_workflow_params
+      working_directory: << parameters.working_directory >>
+      after_checkout_commands: << parameters.after_checkout_commands >>
+
+  # Attach workspace to share data among jobs
+  load_workspace: &load_workspace
+    attach_workspace:
+      at: circleci_workspace
+
+  # Long mvn-related commands
+  mvn_params: &mvn_params
+    parameters:
+      working_directory:
+        description: Directory containing pom.xml
+        type: string
+        default: ''
+      after_checkout_commands:
+        type: string
+        description: commands to run right after checkout
+        default: |
+          echo "No custom commands were configure to run"
+          echo "    configured to run after checkout    "
+      tests_directory:
+        description: Directory where the coverage report in xml is saved to
+        type: string
+        default: 'target/surefire-reports'
+
+  # Long npm-related commands
+  npm_params: &npm_params
+    parameters:
+      working_directory:
+        description: Directory containing package.json and package-lock.json
+        type: string
+        default: ''
+      after_checkout_commands:
+        type: string
+        description: commands to run right after checkout
+        default: |
+          echo "No custom commands were configure to run"
+          echo "    configured to run after checkout    "
+      tests_directory:
+        description: Directory where the coverage report in xml is saved to
+        type: string
+        default: 'coverage/junit'
+
+  # Long pipenv-related commands
+  pipenv_params: &pipenv_params
+    parameters:
+      working_directory:
+        description: Directory containing Pipfile, Pipfile.lock and setup.py
+        type: string
+        default: ''
+      after_checkout_commands:
+        type: string
+        description: commands to run right after checkout
+        default: |
+          echo "No custom commands were configure to run"
+          echo "    configured to run after checkout    "
+      tests_directory:
+        description: Directory where the coverage report in xml is saved to
+        type: string
+        default: 'tmp/test-output'
+
+  pipenv_envsetup: &pipenv_envsetup
+    run:
+      name: Setup Python environment
+      <<: *common_step_params
+      command: |
+        # Setup pip environment
+        sudo pip install --upgrade pip
+        sudo pip install git+https://github.com/pypa/pipenv.git@d10b2a216a25623ba9b3e3c4ce4573e0d764c1e4
+
+        # This should also check to make sure we have a meaningful lock file.
+        pipenv update --dev
+        git status --short
+        git diff --quiet || echo 'WARNING: Lockfile changed, or workspace is dirty. This will not be a predictable build'
+
+  pipenv_checksetup: &pipenv_checksetup
+    run:
+      name: Check Python environment
+      <<: *common_step_params
+      command: |
+        # Run this instead of pipenv graph because graph skips things required by pipenv itself (i.e. setuptools)
+        PIP_LIST="$(pipenv run pip list)"
+        DEPLOY_DEPENDENCIES="setuptools wheel twine"
+        echo "Checking deploy dependencies"
+        # Do not quote DEPLOY_DEPENDENCIES, we want space-based splitting in the loop.
+        for DEPLOY_DEPENDENCY in ${DEPLOY_DEPENDENCIES}; do
+          if ! printf '%s' "${PIP_LIST}" | grep -o "^${DEPLOY_DEPENDENCY}[[:space:]]\+.*$"; then
+            echo "Missing required deploy dependency: ${DEPLOY_DEPENDENCY}." > /dev/stderr
+            echo "Run \"pipenv install --dev ${DEPLOY_DEPENDENCIES}\" to avoid this problem." > /dev/stderr
+            exit 1
+          fi
+        done
+
+  pipenv_lint: &pipenv_lint
+    run:
+      name: Lint code
+      <<: *common_step_params
+      command: |
+        # Code must lint before we do anything else
+        pipenv run lint
+
+  pipenv_buildwheel: &pipenv_buildwheel
+    run:
+      name: Build Python dist file
+      <<: *common_step_params
+      command: |
+        pipenv run python setup.py sdist bdist_wheel
+
+  # Docker goodies
+  start_docker: &start_docker
+    run:
+      name: Start Docker daemon and add CircleCI to allowed users
+      command: |
+        sudo service docker start
+        sudo usermod -a -G docker $(whoami)
+
+  docker_build: &docker_build
+    run:
+      name: Build Docker image
+      # TODO: break if more than one HEAD
+      command: |
+        if [ -z "${CIRCLE_BRANCH}" ]; then TAG_OR_BRANCH="${CIRCLE_TAG}"; else TAG_OR_BRANCH="${CIRCLE_BRANCH}"; fi
+        SANITIZED_CIRCLE_BRANCH=$(printf ${TAG_OR_BRANCH} | tr '[/]' '[_]')
+        VERSION=$(git describe --tags || git rev-parse --short HEAD)
+        DOCKER_TAG="${DOCKER_REGISTRY_HOST}/${CIRCLE_PROJECT_REPONAME}:ci.${SANITIZED_CIRCLE_BRANCH}.${CIRCLE_BUILD_NUM}.${VERSION}"
+        echo "${VERSION}" > .VERSION
+        echo "Building ${DOCKER_TAG} ..."
+        docker build -t "${DOCKER_TAG}" .
+        echo "${DOCKER_TAG}" > .docker_tag
+
+  docker_push: &docker_push
+    run:
+      name: Push Docker image
+      command: |
+        docker push "$(cat .docker_tag)"
+
+#
+# Commands - CircleCI build steps that can be referenced by name in a job
+#
+commands:
+  # Must call this for every build to set up the environment!
+  # Used for lightweight (docker) executors only
+  setup_build_env:
+    description: Set up the build environment
+    steps:
+      - *setup_registries
+      - *setup_vpn_ssh
+      - *connect_vpn_ssh
+      - *wait_vpn
+
+  # Must call this for every machine-type build
+  # Used for building docker containers
+  setup_docker_build_env:
+    description: Set up the build environment for Docker images
+    steps:
+      - *setup_registries
+      - *setup_vpn
+      - *connect_vpn
+      - *wait_vpn
+      - *start_docker
+
+  # CircleCI specific
+  load_workspace:
+    description: Load previously persisted workspace
+    steps:
+      - *load_workspace
+
+  # Maven specific
+  mvn_build:
+    description: Build a Maven package
+    <<: *mvn_params
+    steps:
+      - run:
+          name: compile maven package
+          <<: *common_step_params
+          command: mvn compile
+  mvn_test:
+    description: Test a Maven package and upload code coverage
+    <<: *mvn_params
+    steps:
+      - run:
+          name: Run tests
+          <<: *common_step_params
+          command: mvn test
+      - store_test_results:
+          path: << parameters.tests_directory >>
+  mvn_deploy:
+    description: Deploy a Maven package
+    <<: *mvn_params
+    steps:
+      - run:
+          name: deploy maven package
+          <<: *common_step_params
+          command: mvn deploy
+
+  # NPM specific
+  npm_build:
+    description: Build a NPM package
+    <<: *npm_params
+    steps:
+      - run:
+          name: Install dependencies
+          <<: *common_step_params
+          command: npm ci
+      - run:
+          name: Build NPM package
+          <<: *common_step_params
+          command: npm run --if-present build
+  npm_test:
+    description: Test a NPM package and upload code coverage
+    <<: *npm_params
+    steps:
+      - run:
+          name: Run tests
+          <<: *common_step_params
+          command: npm run test
+      - store_test_results:
+          path: 'coverage/junit'
+  npm_publish:
+    description: Publish a package to the Nexus NPM repository
+    <<: *npm_params
+    steps:
+      - run:
+          name: Setting up local dummy git config
+          # This should be fine since we are not pushing from here
+          <<: *common_step_params
+          command: |
+            git config --global user.email "doNot@useThis.com"
+            git config --global user.name "DO NOT USE THIS"
+      - run:
+          name: Obtain version from latest annotated tag
+          # `npm version from-git` adds `"version": "<version from last annotated git tag>"` to `package.json`
+          # since circleci builds are ephemeral this is not an issue because the commit is not pushed
+          # and workspaces (like in Jenkins) are not re-used
+          <<: *common_step_params
+          command: npm version from-git
+      - run:
+          name: Publish npm package
+          <<: *common_step_params
+          command: npm publish
+
+  # Pip/Pipenv specific
+  pipenv_lint:
+    description: Run lint in a Pipenv-based project
+    <<: *pipenv_params
+    steps:
+      - *pipenv_envsetup
+      - *pipenv_lint
+
+  pipenv_build:
+    description: Build a Pipenv-based project
+    <<: *pipenv_params
+    steps:
+      - *pipenv_envsetup
+      - *pipenv_checksetup
+      - *pipenv_lint
+      - *pipenv_buildwheel
+
+  pipenv_test:
+    description: Test Python package and upload code coverage
+    <<: *pipenv_params
+    steps:
+      - run:
+          name: Test Python package
+          <<: *common_step_params
+          command: |
+            pipenv run test
+      - store_test_results:
+          path: 'tmp/test-output'
+
+  pipenv_publish:
+    description: Publish a package to the Nexus PyPi repository
+    <<: *pipenv_params
+    steps:
+      - run:
+          name: Upload package to Nexus
+          <<: *common_step_params
+          command: pipenv run twine upload -r nexus dist/*
+
+  # Docker specific
+  docker_build:
+    description: Build a docker image with the appropriate tags
+    steps:
+      - *docker_build
+  docker_push:
+    description: Publish a docker image to the Nexus Docker repository
+    steps:
+      - *docker_push
+
+  docker_deploy:
+    description: Change docker image in marathon
+    parameters:
+      hook_url:
+        type: string
+        description: webhook url to call
+      path:
+        type: enum
+        description: either deploy or chronos
+        enum: ["deploy", "chronos"]
+        default: "deploy"
+      task_name:
+        type: string
+        description: task name to update
+    steps:
+      - run:
+          name: Deploy built docker image to environment
+          command: |
+            DOCKER_TAG="$(cat .docker_tag)"
+            curl \
+            -XPATCH \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -u "circleci:${NEXUS_PASS}" \
+            -d "{\"image\": \"${DOCKER_TAG}\"}" \
+            << parameters.hook_url >>/<< parameters.path >>/<< parameters.task_name >>
+
+  # Notification commands
+  notify_slack:
+    description: Notify Slack about a build status
+    steps:
+      - run: echo "Here we would normally notify a user about their build status"
+
+  install_awscli:
+    description: Install AWS CLI
+    steps:
+      - run:
+          name: Install AWS CLI
+          command: |
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip awscliv2.zip
+            sudo ./aws/install
+            echo 'Installing less see https://github.com/aws/aws-cli/issues/5038'
+            export DEBIAN_FRONTEND=noninteractive
+            sudo apt update && sudo apt install -yy less
+
+  after_checkout:
+    description: Run a command after checkout
+    parameters:
+      working_directory:
+        description: Directory where the after_checkout commands should be executed at
+        type: string
+        default: ''
+      after_checkout_commands:
+        type: string
+        description: commands to run right after checkout
+        default: |
+          echo "No custom commands were configure to run"
+          echo "    configured to run after checkout    "
+    steps:
+      - run:
+          name: Running command after checkout
+          working_directory: << parameters.working_directory >>
+          command: << parameters.after_checkout_commands >>
+
+# Executors - CircleCI build agents. Each is either a docker container or a VM image name
+# Use the executors named here so we can swap them out at a later time if neceivyry
+executors:
+  java_8:
+    # From https://circleci.com/docs/2.0/language-java-maven/
+    docker:
+      - image: circleci/openjdk:8-jdk-stretch
+  nodejs_10:
+    # Node.js build agent for testing and building NPM packages
+    docker:
+      - image: circleci/node:10.19.0-buster
+  python_374:
+    # Python build agent for testing and building PyPi packages (Pipenv, Pip...)
+    docker:
+      - image: circleci/python:3.7.4-buster
+  docker:
+    # Build agent for creating Docker images. Slower to start, but infinitely flexible
+    machine:
+      resource_class: medium
+      image: ubuntu-1604:201903-01
+
+
+#
+# Job definitions
+# Reference these as `ivy-circleci-orb/...` in dependent jobs
+#
+# Each of these jobs can be thought of as a self contained build process that can be referenced
+# from other repositories
+#
+jobs:
+  build_npm_and_release:
+    <<: *npm_params
+    executor: nodejs_10
+    steps:
+      - setup_build_env
+      - checkout
+      - after_checkout:
+          <<: *after_checkout_workflow_params
+      - npm_build:
+          <<: *common_step_params
+      - npm_test:
+          <<: *common_step_params
+      - npm_publish:
+          <<: *common_step_params
+  build_npm:
+    <<: *npm_params
+    executor: nodejs_10
+    steps:
+      - setup_build_env
+      - checkout
+      - after_checkout:
+          <<: *after_checkout_workflow_params
+      - npm_build:
+          <<: *common_step_params
+      - npm_test:
+          <<: *common_step_params
+  build_mvn_and_release:
+    <<: *mvn_params
+    executor: java_8
+    steps:
+      - setup_build_env
+      - checkout
+      - after_checkout:
+          <<: *after_checkout_workflow_params
+      - mvn_build:
+          <<: *common_workflow_params
+      - mvn_test:
+          <<: *common_workflow_params
+      - mvn_deploy:
+          <<: *common_workflow_params
+  test_mvn:
+    <<: *mvn_params
+    executor: java_8
+    steps:
+      - setup_build_env
+      - checkout
+      - after_checkout:
+          <<: *after_checkout_workflow_params
+      - mvn_test:
+          <<: *common_workflow_params
+  build_mvn:
+    <<: *mvn_params
+    executor: java_8
+    steps:
+      - setup_build_env
+      - checkout
+      - after_checkout:
+          <<: *after_checkout_workflow_params
+      - mvn_build:
+          <<: *common_workflow_params
+      - mvn_test:
+          <<: *common_workflow_params
+  build_pipenv_and_release:
+    <<: *pipenv_params
+    executor: python_374
+    steps:
+      - setup_build_env
+      - checkout
+      - after_checkout:
+          <<: *after_checkout_workflow_params
+      - pipenv_build:
+          <<: *common_step_params
+      - pipenv_test:
+          <<: *common_step_params
+      - pipenv_publish:
+          <<: *common_step_params
+  test_pipenv:
+    <<: *pipenv_params
+    executor: python_374
+    steps:
+      - setup_build_env
+      - checkout
+      - after_checkout:
+          <<: *after_checkout_workflow_params
+      - pipenv_lint:
+          <<: *common_step_params
+      - pipenv_test:
+          <<: *common_step_params
+  build_pipenv:
+    <<: *pipenv_params
+    executor: python_374
+    steps:
+      - setup_build_env
+      - checkout
+      - after_checkout:
+          <<: *after_checkout_workflow_params
+      - pipenv_build:
+          <<: *common_step_params
+      - pipenv_test:
+          <<: *common_step_params
+  build_docker:
+    executor: docker
+    steps:
+      - setup_docker_build_env
+      - checkout
+      - load_workspace
+      - docker_build
+      - docker_push
+  build_docker_and_deploy:
+    parameters:
+      deploy_hook_url:
+        type: string
+        description: webhook url to call
+      deploy_path:
+        type: enum
+        description: either deploy or chronos
+        enum: ["deploy", "chronos"]
+        default: "deploy"
+      deploy_task_name:
+        type: string
+        description: task name to update
+    executor: docker
+    steps:
+      - setup_docker_build_env
+      - checkout
+      - load_workspace
+      - docker_build
+      - docker_push
+      - docker_deploy:
+          hook_url: << parameters.deploy_hook_url >>
+          path: << parameters.deploy_path >>
+          task_name: << parameters.deploy_task_name >>
+
+#
+# User examples showing how to use this Orb
+#
+examples:
+  persist_artifact:
+    description: |
+      Save built jar and docker can later use this compiled jar instead of rebuilding
+    usage:
+      version: 2.1
+      orbs:
+        ssabuild: nxtlytics/ivy-circleci-orb@0.0.1
+      workflows:
+        version: 2
+        build:
+          jobs:
+            - ivy-circleci-orb/build_mvn:
+                after_checkout_commands: |
+                  echo "These commands will be"
+                  echo "executed after checkout"
+                post-steps:
+                  - persist_to_workspace:
+                      name: Save jar to workspace
+                      root: directory/with/compiled/artifacts
+                      paths:
+                        - my-example-project-0.1.0-SNAPSHOT-jar-with-dependencies.jar
+            - ivy-circleci-orb/build_docker_and_deploy:
+                deploy_hook_url: "Endpoint where to HTTP PATCH new image"
+                deploy_task_name: "App namespace in environment"
+                require:
+                  - ssabuild/build_mvn
+  deploy_docker:
+    description: |
+      Builds docker image and updates environment with it.
+    usage:
+      version: 2.1
+      orbs:
+        ivy-circleci-orb: nxtlytics/ivy-circleci-orb@0.0.1
+      workflows:
+        version: 2
+        build:
+          jobs:
+            - ivy-circleci-orb/build_docker_and_deploy:
+                deploy_hook_url: "Endpoint where to HTTP PATCH new image"
+                deploy_task_name: "App namespace in environment"
+  release_python_module:
+    description: |
+      Builds and publishes python module
+    usage:
+      version: 2.1
+      orbs:
+        ivy-circleci-orb: nxtlytics/ivy-circleci-orb@0.0.1
+      workflows:
+        version: 2
+        build:
+          jobs:
+            - ivy-circleci-orb/build_pipenv_and_release:
+                filters:
+                  branches:
+                    only:
+                      - master
+                      - develop
