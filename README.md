@@ -1,6 +1,8 @@
 # Ivy CircleCi Orb
 
-A CircleCi orb (reusable YAML reference set) to standardize build processes.  
+A CircleCi orb (reusable YAML reference set) to standardize build processes.
+
+[CircleCi registry link](https://circleci.com/orbs/registry/orb/nxtlytics/ivy-circleci-orb)
 
 Best used in conjunction with one of the Saplings:
  * [sapling_node-module](https://github.com/nxtlytics/sapling_node-module) - Uses `build_npm` / `build_npm_and_release`
