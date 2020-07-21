@@ -69,10 +69,6 @@ references:
         echo "nexusUsername=${NEXUS_USER}
         nexusPassword=${NEXUS_PASS}" > ~/.gradle/gradle.properties
 
-        # Update Google Chrome and heroku keys
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        wget -qO- https://cli-assets.heroku.com/install-ubuntu.sh | sh
-
         # Docker
         if [ ! -f /etc/docker/daemon.json ]; then
           sudo mkdir /etc/docker || true
@@ -82,6 +78,28 @@ references:
         mkdir ~/.docker || true
         sudo mkdir ${ROOT_HOME}/.docker || true
         echo "{\"auths\": { \"${DOCKER_REGISTRY_HOST}\": {\"auth\": \"${NPM_AUTH}\",\"email\": \"${CI_EMAIL}\"}}}" > ~/.docker/config.json
+        sudo cp ~/.docker/config.json "${ROOT_HOME}"/.docker/config.json
+        sudo chown root: "${ROOT_HOME}"/.docker/config.json
+
+  setup_public_registries: &setup_public_registries
+    run:
+      name: Set up all public registries
+      command: |
+        # Print environment
+        echo "Environment configuration ===================="
+        env | egrep -v '.*_PASS|.*_CONFIG' | awk -F'=' '{st = index($0,"="); printf("\033[0;35m%-50s\033[0m= \"%s\"\n", $1, substr($0,st+1))}'
+        echo "=============================================="
+
+        # Docker
+        DOCKER_AUTH=$(echo -n "${DOCKERHUB_USER}:${DOCKERHUB_PASS}" | base64)
+
+        if [ ! -f /etc/docker/daemon.json ]; then
+          sudo mkdir /etc/docker || true
+          echo '{}' | sudo tee /etc/docker/daemon.json
+        fi
+        mkdir ~/.docker || true
+        sudo mkdir ${ROOT_HOME}/.docker || true
+        echo "{\"auths\": { \"${DOCKER_REGISTRY_HOST}\": {\"auth\": \"${DOCKER_AUTH}\",\"email\": \"${CI_EMAIL}\"}}}" > ~/.docker/config.json
         sudo cp ~/.docker/config.json "${ROOT_HOME}"/.docker/config.json
         sudo chown root: "${ROOT_HOME}"/.docker/config.json
 
@@ -198,6 +216,10 @@ references:
         description: Directory where the coverage report in xml is saved to
         type: string
         default: 'target/surefire-reports'
+      use_nexus:
+        description: Set True if you are using your own nexus host
+        type: boolean
+        default: false
 
   # Long npm-related commands
   npm_params: &npm_params
@@ -216,6 +238,10 @@ references:
         description: Directory where the coverage report in xml is saved to
         type: string
         default: 'coverage/junit'
+      use_nexus:
+        description: Set True if you are using your own nexus host
+        type: boolean
+        default: false
 
   # Long pipenv-related commands
   pipenv_params: &pipenv_params
@@ -234,6 +260,10 @@ references:
         description: Directory where the coverage report in xml is saved to
         type: string
         default: 'tmp/test-output'
+      use_nexus:
+        description: Set True if you are using your own nexus host
+        type: boolean
+        default: false
 
   pipenv_envsetup: &pipenv_envsetup
     run:
@@ -314,10 +344,26 @@ references:
 # Commands - CircleCI build steps that can be referenced by name in a job
 #
 commands:
-  # Must call this for every build to set up the environment!
+# CircleCI specific
+  fix_circleci:
+    description: Fix circleci image issue - must call this before every build
+    steps:
+      - run:
+          name: commands to workaround circleci issues
+          command: |
+            # Update Google Chrome and heroku keys
+            wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+            wget -qO- https://cli-assets.heroku.com/install-ubuntu.sh | sh
+
+  load_workspace:
+    description: Load previously persisted workspace
+    steps:
+      - *load_workspace
+
+ # Must call this for every build to set up the environment!
   # Used for lightweight (docker) executors only
-  setup_build_env:
-    description: Set up the build environment
+  setup_nexus_build_env:
+    description: Set up the build environment to use a private nexus host
     steps:
       - *setup_registries
       - *setup_vpn_ssh
@@ -326,8 +372,8 @@ commands:
 
   # Must call this for every machine-type build
   # Used for building docker containers
-  setup_docker_build_env:
-    description: Set up the build environment for Docker images
+  setup_nexus_docker_build_env:
+    description: Set up the build environment for Docker images using a private nexus host
     steps:
       - *setup_registries
       - *setup_vpn
@@ -335,11 +381,20 @@ commands:
       - *wait_vpn
       - *start_docker
 
-  # CircleCI specific
-  load_workspace:
-    description: Load previously persisted workspace
+  # Must call this for every build to set up the environment!
+  # Used for lightweight (docker) executors only
+  setup_public_build_env:
+    description: Set up the build environment
     steps:
-      - *load_workspace
+      - *setup_public_registries
+
+  # Must call this for every machine-type build
+  # Used for building docker containers
+  setup_public_docker_build_env:
+    description: Set up the build environment for Docker images
+    steps:
+      - *setup_public_registries
+      - *start_docker
 
   # Maven specific
   mvn_build:
@@ -562,7 +617,16 @@ jobs:
     <<: *npm_params
     executor: nodejs_10
     steps:
-      - setup_build_env
+      - fix_circleci
+      - run: echo "use_nexus is << parameters.use_nexus >>"
+      - when:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_nexus_build_env
+      - unless:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_public_build_env
       - checkout
       - after_checkout:
           <<: *after_checkout_workflow_params
@@ -576,7 +640,16 @@ jobs:
     <<: *npm_params
     executor: nodejs_10
     steps:
-      - setup_build_env
+      - fix_circleci
+      - run: echo "use_nexus is << parameters.use_nexus >>"
+      - when:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_nexus_build_env
+      - unless:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_public_build_env
       - checkout
       - after_checkout:
           <<: *after_checkout_workflow_params
@@ -588,7 +661,16 @@ jobs:
     <<: *mvn_params
     executor: java_8
     steps:
-      - setup_build_env
+      - fix_circleci
+      - run: echo "use_nexus is << parameters.use_nexus >>"
+      - when:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_nexus_build_env
+      - unless:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_public_build_env
       - checkout
       - after_checkout:
           <<: *after_checkout_workflow_params
@@ -602,7 +684,16 @@ jobs:
     <<: *mvn_params
     executor: java_8
     steps:
-      - setup_build_env
+      - fix_circleci
+      - run: echo "use_nexus is << parameters.use_nexus >>"
+      - when:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_nexus_build_env
+      - unless:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_public_build_env
       - checkout
       - after_checkout:
           <<: *after_checkout_workflow_params
@@ -612,7 +703,16 @@ jobs:
     <<: *mvn_params
     executor: java_8
     steps:
-      - setup_build_env
+      - fix_circleci
+      - run: echo "use_nexus is << parameters.use_nexus >>"
+      - when:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_nexus_build_env
+      - unless:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_public_build_env
       - checkout
       - after_checkout:
           <<: *after_checkout_workflow_params
@@ -624,7 +724,16 @@ jobs:
     <<: *pipenv_params
     executor: python_374
     steps:
-      - setup_build_env
+      - fix_circleci
+      - run: echo "use_nexus is << parameters.use_nexus >>"
+      - when:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_nexus_build_env
+      - unless:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_public_build_env
       - checkout
       - after_checkout:
           <<: *after_checkout_workflow_params
@@ -638,7 +747,16 @@ jobs:
     <<: *pipenv_params
     executor: python_374
     steps:
-      - setup_build_env
+      - fix_circleci
+      - run: echo "use_nexus is << parameters.use_nexus >>"
+      - when:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_nexus_build_env
+      - unless:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_public_build_env
       - checkout
       - after_checkout:
           <<: *after_checkout_workflow_params
@@ -650,7 +768,16 @@ jobs:
     <<: *pipenv_params
     executor: python_374
     steps:
-      - setup_build_env
+      - fix_circleci
+      - run: echo "use_nexus is << parameters.use_nexus >>"
+      - when:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_nexus_build_env
+      - unless:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_public_build_env
       - checkout
       - after_checkout:
           <<: *after_checkout_workflow_params
@@ -659,9 +786,25 @@ jobs:
       - pipenv_test:
           <<: *common_step_params
   build_docker:
+    parameters:
+      use_nexus:
+        description: Set True if you are using your own nexus host
+        type: boolean
+        default: false
     executor: docker
     steps:
-      - setup_docker_build_env
+      - fix_circleci
+      - run:
+          name: show use_nexus value
+          command: echo "use_nexus is << parameters.use_nexus >>"
+      - when:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_nexus_docker_build_env
+      - unless:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_public_docker_build_env
       - checkout
       - load_workspace
       - docker_build
@@ -679,9 +822,24 @@ jobs:
       deploy_task_name:
         type: string
         description: task name to update
+      use_nexus:
+        description: Set True if you are using your own nexus host
+        type: boolean
+        default: false
     executor: docker
     steps:
-      - setup_docker_build_env
+      - fix_circleci
+      - run:
+          name: show use_nexus value
+          command: echo "use_nexus is << parameters.use_nexus >>"
+      - when:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_nexus_docker_build_env
+      - unless:
+          condition: << parameters.use_nexus >>
+          steps:
+            - setup_public_docker_build_env
       - checkout
       - load_workspace
       - docker_build
