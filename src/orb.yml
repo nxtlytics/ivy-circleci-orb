@@ -92,6 +92,9 @@ references:
 
         # Docker
         DOCKER_AUTH=$(echo -n "${DOCKERHUB_USER}:${DOCKERHUB_PASS}" | base64)
+        if [ "${DOCKER_REGISTRY_HOST}" == 'hub.docker.com' ]; then
+          DOCKER_REGISTRY_HOST='https://index.docker.io/v1/'
+        fi
 
         if [ ! -f /etc/docker/daemon.json ]; then
           sudo mkdir /etc/docker || true
@@ -329,6 +332,11 @@ references:
         description: Set True if you are using your own nexus host
         type: boolean
         default: false
+      simple_docker_tag:
+        type: enum
+        description: use simple docker tag
+        enum: ["yes", "no"]
+        default: "no"
 
   start_docker: &start_docker
     run:
@@ -346,7 +354,16 @@ references:
         if [ -z "${CIRCLE_BRANCH}" ]; then TAG_OR_BRANCH="${CIRCLE_TAG}"; else TAG_OR_BRANCH="${CIRCLE_BRANCH}"; fi
         SANITIZED_CIRCLE_BRANCH=$(printf ${TAG_OR_BRANCH} | tr '[/]' '[_]')
         VERSION=$(git describe --tags || git rev-parse --short HEAD)
-        DOCKER_TAG="${DOCKER_REGISTRY_HOST}/${CIRCLE_PROJECT_REPONAME}:ci.${SANITIZED_CIRCLE_BRANCH}.${CIRCLE_BUILD_NUM}.${VERSION}"
+        if [ "${DOCKER_REGISTRY_HOST}" == 'hub.docker.com']; then
+          DOCKER_PREFIX="${CIRCLE_PROJECT_REPONAME}"
+        else
+          Docker_PREFIX="${DOCKER_REGISTRY_HOST}/${CIRCLE_PROJECT_REPONAME}"
+        fi
+        TAG_FORMAT="ci.${SANITIZED_CIRCLE_BRANCH}.${CIRCLE_BUILD_NUM}.${VERSION}"
+        if [ "<< parameters.simple_docker_tag >>" == 'yes' ]; then
+          TAG_FORMAT="${SANITIZED_CIRCLE_BRANCH}"
+        fi
+        DOCKER_TAG="${DOCKER_PREFIX}:${TAG_FORMAT}"
         echo "${VERSION}" > .VERSION
         echo "Building ${DOCKER_TAG} ..."
         docker build -t "${DOCKER_TAG}" .
@@ -833,6 +850,7 @@ jobs:
       - load_workspace
       - docker_build:
           <<: *common_step_params
+          simple_docker_tag: << parameters.simple_docker_tag >>
       - docker_push:
           <<: *common_step_params
   build_docker_and_deploy:
@@ -862,6 +880,11 @@ jobs:
         description: Set True if you are using your own nexus host
         type: boolean
         default: false
+      simple_docker_tag:
+        type: enum
+        description: use simple docker tag
+        enum: ["yes", "no"]
+        default: "no"
     executor: docker
     steps:
       - fix_circleci
@@ -882,6 +905,7 @@ jobs:
       - load_workspace
       - docker_build:
           <<: *common_step_params
+          simple_docker_tag: << parameters.simple_docker_tag >>
       - docker_push:
           <<: *common_step_params
       - docker_deploy:
