@@ -313,6 +313,23 @@ references:
         pipenv run python setup.py sdist bdist_wheel
 
   # Docker goodies
+  docker_params: &docker_params
+    parameters:
+      working_directory:
+        description: Directory containing Dockerfile
+        type: string
+        default: ''
+      after_checkout_commands:
+        type: string
+        description: commands to run right after checkout
+        default: |
+          echo "No custom commands were configure to run"
+          echo "    configured to run after checkout    "
+      use_nexus:
+        description: Set True if you are using your own nexus host
+        type: boolean
+        default: false
+
   start_docker: &start_docker
     run:
       name: Start Docker daemon and add CircleCI to allowed users
@@ -323,6 +340,7 @@ references:
   docker_build: &docker_build
     run:
       name: Build Docker image
+      <<: *common_step_params
       # TODO: break if more than one HEAD
       command: |
         if [ -z "${CIRCLE_BRANCH}" ]; then TAG_OR_BRANCH="${CIRCLE_TAG}"; else TAG_OR_BRANCH="${CIRCLE_BRANCH}"; fi
@@ -337,6 +355,7 @@ references:
   docker_push: &docker_push
     run:
       name: Push Docker image
+      <<: *common_step_params
       command: |
         docker push "$(cat .docker_tag)"
 
@@ -511,10 +530,12 @@ commands:
   # Docker specific
   docker_build:
     description: Build a docker image with the appropriate tags
+    <<: *docker_params
     steps:
       - *docker_build
   docker_push:
     description: Publish a docker image to the Nexus Docker repository
+    <<: *docker_params
     steps:
       - *docker_push
 
@@ -532,9 +553,14 @@ commands:
       task_name:
         type: string
         description: task name to update
+      working_directory:
+        description: Directory containing Dockerfile
+        type: string
+        default: ''
     steps:
       - run:
           name: Deploy built docker image to environment
+          working_directory: << parameters.working_directory >>
           command: |
             DOCKER_TAG="$(cat .docker_tag)"
             curl \
@@ -786,11 +812,7 @@ jobs:
       - pipenv_test:
           <<: *common_step_params
   build_docker:
-    parameters:
-      use_nexus:
-        description: Set True if you are using your own nexus host
-        type: boolean
-        default: false
+    <<: *docker_params
     executor: docker
     steps:
       - fix_circleci
@@ -806,9 +828,13 @@ jobs:
           steps:
             - setup_public_docker_build_env
       - checkout
+      - after_checkout:
+          <<: *after_checkout_workflow_params
       - load_workspace
-      - docker_build
-      - docker_push
+      - docker_build:
+          <<: *common_step_params
+      - docker_push:
+          <<: *common_step_params
   build_docker_and_deploy:
     parameters:
       deploy_hook_url:
@@ -822,6 +848,16 @@ jobs:
       deploy_task_name:
         type: string
         description: task name to update
+      working_directory:
+        description: Directory containing Dockerfile
+        type: string
+        default: ''
+      after_checkout_commands:
+        type: string
+        description: commands to run right after checkout
+        default: |
+          echo "No custom commands were configure to run"
+          echo "    configured to run after checkout    "
       use_nexus:
         description: Set True if you are using your own nexus host
         type: boolean
@@ -841,13 +877,18 @@ jobs:
           steps:
             - setup_public_docker_build_env
       - checkout
+      - after_checkout:
+          <<: *after_checkout_workflow_params
       - load_workspace
-      - docker_build
-      - docker_push
+      - docker_build:
+          <<: *common_step_params
+      - docker_push:
+          <<: *common_step_params
       - docker_deploy:
           hook_url: << parameters.deploy_hook_url >>
           path: << parameters.deploy_path >>
           task_name: << parameters.deploy_task_name >>
+          working_directory: << parameters.working_directory >>
 
 #
 # User examples showing how to use this Orb
