@@ -639,10 +639,10 @@ executors:
     # From https://circleci.com/docs/2.0/language-java-maven/
     docker:
       - image: circleci/openjdk:8-jdk-stretch
-  nodejs_10:
+  nodejs_12:
     # Node.js build agent for testing and building NPM packages
     docker:
-      - image: circleci/node:10.19.0-buster
+      - image: circleci/node:12.18.2-buster
   python_374:
     # Python build agent for testing and building PyPi packages (Pipenv, Pip...)
     docker:
@@ -651,7 +651,7 @@ executors:
     # Build agent for creating Docker images. Slower to start, but infinitely flexible
     machine:
       resource_class: medium
-      image: ubuntu-1604:201903-01
+      image: ubuntu-1604:202007-01
 
 
 #
@@ -664,7 +664,7 @@ executors:
 jobs:
   build_npm_and_release:
     <<: *npm_params
-    executor: nodejs_10
+    executor: nodejs_12
     steps:
       - run: echo "use_nexus is << parameters.use_nexus >>"
       - when:
@@ -686,7 +686,7 @@ jobs:
           <<: *common_step_params
   build_npm:
     <<: *npm_params
-    executor: nodejs_10
+    executor: nodejs_12
     steps:
       - run: echo "use_nexus is << parameters.use_nexus >>"
       - when:
@@ -830,7 +830,6 @@ jobs:
     <<: *docker_params
     executor: docker
     steps:
-      - fix_circleci
       - run:
           name: show use_nexus value
           command: echo "use_nexus is << parameters.use_nexus >>"
@@ -889,7 +888,6 @@ jobs:
         default: 'notset'
     executor: docker
     steps:
-      - fix_circleci
       - run:
           name: show use_nexus value
           command: echo "use_nexus is << parameters.use_nexus >>"
