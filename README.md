@@ -63,7 +63,7 @@ This orb provides ready to use workflow jobs in three categories:
 
 Dependent tasks are clear and concise as to what they require to build.  
 
-```
+```shell
 #
 # User examples showing how to use this Orb
 #
@@ -74,7 +74,7 @@ examples:
     usage:
       version: 2.1
       orbs:
-        ***REMOVED***: nxtlytics/ivy-circleci-orb@0.0.1
+        ivy-circleci-orb: nxtlytics/ivy-circleci-orb@0.0.1
       workflows:
         version: 2
         build:
@@ -93,7 +93,7 @@ examples:
                 deploy_hook_url: "Endpoint where to HTTP PATCH new image"
                 deploy_task_name: "App namespace in environment"
                 require:
-                  - ***REMOVED***/build_mvn
+                  - ivy-circleci-orb/build_mvn
   deploy_docker:
     description: |
       Builds docker image and updates environment with it.
