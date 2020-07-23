@@ -333,10 +333,9 @@ references:
         type: boolean
         default: false
       simple_docker_tag:
-        type: enum
+        type: boolean
         description: use simple docker tag
-        enum: ["yes", "no"]
-        default: "no"
+        default: false
       container_name:
         description: Name for this container
         type: string
@@ -368,7 +367,7 @@ references:
           Docker_PREFIX="${DOCKER_REGISTRY_HOST}/${CONTAINER_NAME}"
         fi
         TAG_FORMAT="ci.${SANITIZED_CIRCLE_BRANCH}.${CIRCLE_BUILD_NUM}.${VERSION}"
-        if [ '<< parameters.simple_docker_tag >>' == 'yes' ]; then
+        if [ '<< parameters.simple_docker_tag >>' == 'true' ]; then
           TAG_FORMAT="${SANITIZED_CIRCLE_BRANCH}"
         fi
         DOCKER_TAG="${DOCKER_PREFIX}:${TAG_FORMAT}"
@@ -890,10 +889,9 @@ jobs:
         type: boolean
         default: false
       simple_docker_tag:
-        type: enum
+        type: boolean
         description: use simple docker tag
-        enum: ["yes", "no"]
-        default: "no"
+        default: false
       container_name:
         description: Name for this container
         type: string
