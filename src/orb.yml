@@ -666,7 +666,6 @@ jobs:
     <<: *npm_params
     executor: nodejs_10
     steps:
-      - fix_circleci
       - run: echo "use_nexus is << parameters.use_nexus >>"
       - when:
           condition: << parameters.use_nexus >>
@@ -689,7 +688,6 @@ jobs:
     <<: *npm_params
     executor: nodejs_10
     steps:
-      - fix_circleci
       - run: echo "use_nexus is << parameters.use_nexus >>"
       - when:
           condition: << parameters.use_nexus >>
@@ -710,7 +708,6 @@ jobs:
     <<: *mvn_params
     executor: java_8
     steps:
-      - fix_circleci
       - run: echo "use_nexus is << parameters.use_nexus >>"
       - when:
           condition: << parameters.use_nexus >>
@@ -733,7 +730,6 @@ jobs:
     <<: *mvn_params
     executor: java_8
     steps:
-      - fix_circleci
       - run: echo "use_nexus is << parameters.use_nexus >>"
       - when:
           condition: << parameters.use_nexus >>
@@ -752,7 +748,6 @@ jobs:
     <<: *mvn_params
     executor: java_8
     steps:
-      - fix_circleci
       - run: echo "use_nexus is << parameters.use_nexus >>"
       - when:
           condition: << parameters.use_nexus >>
@@ -773,7 +768,6 @@ jobs:
     <<: *pipenv_params
     executor: python_374
     steps:
-      - fix_circleci
       - run: echo "use_nexus is << parameters.use_nexus >>"
       - when:
           condition: << parameters.use_nexus >>
@@ -796,7 +790,6 @@ jobs:
     <<: *pipenv_params
     executor: python_374
     steps:
-      - fix_circleci
       - run: echo "use_nexus is << parameters.use_nexus >>"
       - when:
           condition: << parameters.use_nexus >>
@@ -817,7 +810,6 @@ jobs:
     <<: *pipenv_params
     executor: python_374
     steps:
-      - fix_circleci
       - run: echo "use_nexus is << parameters.use_nexus >>"
       - when:
           condition: << parameters.use_nexus >>
