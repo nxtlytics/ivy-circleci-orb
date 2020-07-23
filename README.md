@@ -156,3 +156,4 @@ Your dev orb will expire in 90 days unless a new version is published on the lab
 ## Related links
 
 - [Publishing Orbs](https://circleci.com/docs/2.0/creating-orbs/?gclid=EAIaIQobChMIpfWL3Jq25wIVhcDACh08JwBIEAAYASAAEgJqoPD_BwE)
+- [Machine executor list](https://circleci.com/docs/2.0/configuration-reference/#machine)
