@@ -361,10 +361,9 @@ references:
         if [ '<< parameters.container_name >>' != 'notset' ]; then
           CONTAINER_NAME='<< parameters.container_name >>'
         fi
+        DOCKER_PREFIX="${DOCKER_REGISTRY_HOST}/${CONTAINER_NAME}"
         if [ "${DOCKER_REGISTRY_HOST}" == 'hub.docker.com']; then
           DOCKER_PREFIX="${CIRCLE_PROJECT_USERNAME}/${CONTAINER_NAME}"
-        else
-          Docker_PREFIX="${DOCKER_REGISTRY_HOST}/${CONTAINER_NAME}"
         fi
         TAG_FORMAT="ci.${SANITIZED_CIRCLE_BRANCH}.${CIRCLE_BUILD_NUM}.${VERSION}"
         if [ '<< parameters.simple_docker_tag >>' == 'true' ]; then
