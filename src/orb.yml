@@ -183,19 +183,19 @@ references:
 
   # Common step params
   common_step_params: &common_step_params
-      working_directory: << parameters.working_directory >>
-      after_checkout_commands: << parameters.after_checkout_commands >>
+    working_directory: << parameters.working_directory >>
+    after_checkout_commands: << parameters.after_checkout_commands >>
 
   # Common workflow params
   common_workflow_params: &common_workflow_params
-      working_directory: << parameters.working_directory >>
-      after_checkout_commands: << parameters.after_checkout_commands >>
-      tests_directory: << parameters.tests_directory >>
+    working_directory: << parameters.working_directory >>
+    after_checkout_commands: << parameters.after_checkout_commands >>
+    tests_directory: << parameters.tests_directory >>
 
   # after_checkout workflow params
   after_checkout_workflow_params: &after_checkout_workflow_params
-      working_directory: << parameters.working_directory >>
-      after_checkout_commands: << parameters.after_checkout_commands >>
+    working_directory: << parameters.working_directory >>
+    after_checkout_commands: << parameters.after_checkout_commands >>
 
   # Attach workspace to share data among jobs
   load_workspace: &load_workspace
@@ -208,7 +208,7 @@ references:
       working_directory:
         description: Directory containing pom.xml
         type: string
-        default: ''
+        default: ""
       after_checkout_commands:
         type: string
         description: commands to run right after checkout
@@ -218,7 +218,7 @@ references:
       tests_directory:
         description: Directory where the coverage report in xml is saved to
         type: string
-        default: 'target/surefire-reports'
+        default: "target/surefire-reports"
       use_nexus:
         description: Set True if you are using your own nexus host
         type: boolean
@@ -230,7 +230,7 @@ references:
       working_directory:
         description: Directory containing package.json and package-lock.json
         type: string
-        default: ''
+        default: ""
       after_checkout_commands:
         type: string
         description: commands to run right after checkout
@@ -240,7 +240,7 @@ references:
       tests_directory:
         description: Directory where the coverage report in xml is saved to
         type: string
-        default: 'coverage/junit'
+        default: "coverage/junit"
       use_nexus:
         description: Set True if you are using your own nexus host
         type: boolean
@@ -252,7 +252,7 @@ references:
       working_directory:
         description: Directory containing Pipfile, Pipfile.lock and setup.py
         type: string
-        default: ''
+        default: ""
       after_checkout_commands:
         type: string
         description: commands to run right after checkout
@@ -262,7 +262,7 @@ references:
       tests_directory:
         description: Directory where the coverage report in xml is saved to
         type: string
-        default: 'tmp/test-output'
+        default: "tmp/test-output"
       use_nexus:
         description: Set True if you are using your own nexus host
         type: boolean
@@ -374,6 +374,19 @@ references:
         echo "Building ${DOCKER_TAG} ..."
         docker build -t "${DOCKER_TAG}" .
         echo "${DOCKER_TAG}" > .docker_tag
+        if [ ! -z "${CIRCLE_BRANCH}" ]; then
+          if [ $CIRCLE_BRANCH = "master" ]; then
+            ENVIRONMENT="master"
+          elif [ $CIRCLE_BRANCH = "develop" ]; then
+            ENVIRONMENT="develop"
+          else
+            ENVIRONMENT="feature"
+          fi;
+          DOCKER_LATEST_TAG="${DOCKER_REGISTRY_HOST}/${CIRCLE_PROJECT_REPONAME}:ci.${ENVIRONMENT}.latest"
+          echo "Tagging ${DOCKER_TAG} with ${DOCKER_LATEST_TAG}"
+          docker tag $DOCKER_TAG $DOCKER_LATEST_TAG
+          echo "${DOCKER_LATEST_TAG}" > .docker_latest_tag
+        fi;
 
   docker_push: &docker_push
     run:
@@ -381,6 +394,7 @@ references:
       <<: *common_step_params
       command: |
         docker push "$(cat .docker_tag)"
+        docker push "$(cat .docker_latest_tag)"
 
 #
 # Commands - CircleCI build steps that can be referenced by name in a job
@@ -402,7 +416,7 @@ commands:
     steps:
       - *load_workspace
 
- # Must call this for every build to set up the environment!
+  # Must call this for every build to set up the environment!
   # Used for lightweight (docker) executors only
   setup_nexus_build_env:
     description: Set up the build environment to use a private nexus host
@@ -488,7 +502,7 @@ commands:
           <<: *common_step_params
           command: npm run test
       - store_test_results:
-          path: 'coverage/junit'
+          path: << parameters.tests_directory >>
   npm_publish:
     description: Publish a package to the Nexus NPM repository
     <<: *npm_params
@@ -539,7 +553,7 @@ commands:
           command: |
             pipenv run test
       - store_test_results:
-          path: 'tmp/test-output'
+          path: << parameters.tests_directory >>
 
   pipenv_publish:
     description: Publish a package to the Nexus PyPi repository
@@ -633,7 +647,7 @@ commands:
           command: << parameters.after_checkout_commands >>
 
 # Executors - CircleCI build agents. Each is either a docker container or a VM image name
-# Use the executors named here so we can swap them out at a later time if neceivyry
+# Use the executors named here so we can swap them out at a later time if necessary
 executors:
   java_8:
     # From https://circleci.com/docs/2.0/language-java-maven/
@@ -653,7 +667,6 @@ executors:
       docker_layer_caching: true
       resource_class: medium
       image: ubuntu-1604:202007-01
-
 
 #
 # Job definitions
@@ -680,11 +693,11 @@ jobs:
       - after_checkout:
           <<: *after_checkout_workflow_params
       - npm_build:
-          <<: *common_step_params
+          <<: *common_workflow_params
       - npm_test:
-          <<: *common_step_params
+          <<: *common_workflow_params
       - npm_publish:
-          <<: *common_step_params
+          <<: *common_workflow_params
   build_npm:
     <<: *npm_params
     executor: nodejs_12
@@ -702,9 +715,9 @@ jobs:
       - after_checkout:
           <<: *after_checkout_workflow_params
       - npm_build:
-          <<: *common_step_params
+          <<: *common_workflow_params
       - npm_test:
-          <<: *common_step_params
+          <<: *common_workflow_params
   build_mvn_and_release:
     <<: *mvn_params
     executor: java_8
@@ -782,11 +795,11 @@ jobs:
       - after_checkout:
           <<: *after_checkout_workflow_params
       - pipenv_build:
-          <<: *common_step_params
+          <<: *common_workflow_params
       - pipenv_test:
-          <<: *common_step_params
+          <<: *common_workflow_params
       - pipenv_publish:
-          <<: *common_step_params
+          <<: *common_workflow_params
   test_pipenv:
     <<: *pipenv_params
     executor: python_374
@@ -804,9 +817,9 @@ jobs:
       - after_checkout:
           <<: *after_checkout_workflow_params
       - pipenv_lint:
-          <<: *common_step_params
+          <<: *common_workflow_params
       - pipenv_test:
-          <<: *common_step_params
+          <<: *common_workflow_params
   build_pipenv:
     <<: *pipenv_params
     executor: python_374
@@ -824,9 +837,9 @@ jobs:
       - after_checkout:
           <<: *after_checkout_workflow_params
       - pipenv_build:
-          <<: *common_step_params
+          <<: *common_workflow_params
       - pipenv_test:
-          <<: *common_step_params
+          <<: *common_workflow_params
   build_docker:
     <<: *docker_params
     executor: docker
@@ -926,7 +939,7 @@ examples:
     usage:
       version: 2.1
       orbs:
-        ivy-circleci-orb: nxtlytics/ivy-circleci-orb@0.0.1
+        ivy-circleci-orb: nxtlytics/ivy-circleci-orb@0.0.5
       workflows:
         version: 2
         build:
@@ -952,7 +965,7 @@ examples:
     usage:
       version: 2.1
       orbs:
-        ivy-circleci-orb: nxtlytics/ivy-circleci-orb@0.0.1
+        ivy-circleci-orb: nxtlytics/ivy-circleci-orb@0.0.5
       workflows:
         version: 2
         build:
@@ -966,7 +979,7 @@ examples:
     usage:
       version: 2.1
       orbs:
-        ivy-circleci-orb: nxtlytics/ivy-circleci-orb@0.0.1
+        ivy-circleci-orb: nxtlytics/ivy-circleci-orb@0.0.5
       workflows:
         version: 2
         build:
