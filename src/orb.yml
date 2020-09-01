@@ -650,6 +650,7 @@ executors:
   docker:
     # Build agent for creating Docker images. Slower to start, but infinitely flexible
     machine:
+      docker_layer_caching: true
       resource_class: medium
       image: ubuntu-1604:202007-01
 
