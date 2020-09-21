@@ -72,10 +72,17 @@ function add_envvar_to_context() {
   echo -n "${SECRET_VALUE}" | circleci context store-secret "${VCS_TYPE}" "${ORG_NAME}" "${CONTEXT_NAME}" "${SECRET_NAME}"
 }
 
-for i in "${CONTEXT_VARS_VALUES[@]}"; do
-  NAME="$(echo "${i}" | cut -d ' ' -f1)"
-  VALUE="$(echo "${i}" | cut -d ' ' -f2)"
-  add_envvar_to_context "${NAME}" "${VALUE}"
-done
+if circleci context list "${VCS_TYPE}" "${ORG_NAME}" | grep "${CONTEXT_NAME}" &> /dev/null; then
+  echo "Context: ${CONTEXT_NAME} already exists, I will not create it"
+else
+  echo "I will try to create context: ${CONTEXT_NAME}"
+  circleci context create "${VCS_TYPE}" "${ORG_NAME}" "${CONTEXT_NAME}"
+  echo "I will add its environment variables now"
+  for i in "${CONTEXT_VARS_VALUES[@]}"; do
+    NAME="$(echo "${i}" | cut -d ' ' -f1)"
+    VALUE="$(echo "${i}" | cut -d ' ' -f2)"
+    add_envvar_to_context "${NAME}" "${VALUE}"
+  done
+fi
 
 echo "I'm done"
