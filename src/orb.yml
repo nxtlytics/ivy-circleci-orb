@@ -375,8 +375,8 @@ references:
         docker build -t "${DOCKER_TAG}" .
         echo "${DOCKER_TAG}" > .docker_tag
         if [ ! -z "${CIRCLE_BRANCH}" ]; then
-          if [ $CIRCLE_BRANCH = "master" ]; then
-            ENVIRONMENT="master"
+          if [ $CIRCLE_BRANCH = "master" || $CIRCLE_BRANCH = main ]; then
+            ENVIRONMENT="main"
           elif [ $CIRCLE_BRANCH = "develop" ]; then
             ENVIRONMENT="develop"
           else
@@ -394,7 +394,10 @@ references:
       <<: *common_step_params
       command: |
         docker push "$(cat .docker_tag)"
-        docker push "$(cat .docker_latest_tag)"
+        if [ -e .docker_latest_tag ]; then
+          echo '.docker_latest_tag file exists, I will try to push tag now'
+          docker push "$(cat .docker_latest_tag)"
+        fi
 
 #
 # Commands - CircleCI build steps that can be referenced by name in a job
@@ -664,7 +667,6 @@ executors:
   docker:
     # Build agent for creating Docker images. Slower to start, but infinitely flexible
     machine:
-      docker_layer_caching: true
       resource_class: medium
       image: ubuntu-2004:202101-01
 
@@ -988,5 +990,5 @@ examples:
                 filters:
                   branches:
                     only:
-                      - master
+                      - main
                       - develop

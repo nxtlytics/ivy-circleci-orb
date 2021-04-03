@@ -44,7 +44,7 @@ This orb provides ready to use workflow jobs in three categories:
     This job should be used for builds on `feature` branches only, as no artifacts are produced.
     
   * `build_npm_and_release` - Build, test, and upload a NPM package to a NPM Registry for use by other packages  
-    Use this job for builds on `master` or `develop` to prepare artifacts (packages) that can be used in other projects
+    Use this job for builds on `main`, `master` or `develop` to prepare artifacts (packages) that can be used in other projects
     or integration tests.
 
 * Pipenv (Python) builds  
@@ -57,7 +57,7 @@ This orb provides ready to use workflow jobs in three categories:
     This job should be used for builds on `feature` branches only, as no artifacts are produced.    
   
   * `build_pipenv_and_release` - Build, test, and upload a PyPi package (via Pipenv) to pypi registry for use by other packages
-    Use this job for builds on `master` or `develop` to prepare artifacts (packages) that can be used in other projects
+    Use this job for builds on `main`, `master` or `develop` to prepare artifacts (packages) that can be used in other projects
 
 ## Example dependent CircleCi task
 
@@ -123,7 +123,7 @@ examples:
                 filters:
                   branches:
                     only:
-                      - master
+                      - main
                       - develop
 ```
 
