@@ -666,7 +666,7 @@ executors:
     machine:
       docker_layer_caching: true
       resource_class: medium
-      image: ubuntu-1604:202007-01
+      image: ubuntu-2004:202101-01
 
 #
 # Job definitions
